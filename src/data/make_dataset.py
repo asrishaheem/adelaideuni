@@ -1,30 +1,61 @@
-# -*- coding: utf-8 -*-
-import click
-import logging
-from pathlib import Path
-from dotenv import find_dotenv, load_dotenv
+import os
+import glob
+
+from tqdm import tqdm
+from PIL import Image
+import numpy as np
+import torch
+from torch.utils.data import Dataset
 
 
-@click.command()
-@click.argument('input_filepath', type=click.Path(exists=True))
-@click.argument('output_filepath', type=click.Path())
-def main(input_filepath, output_filepath):
-    """ Runs data processing scripts to turn raw data from (../raw) into
-        cleaned data ready to be analyzed (saved in ../processed).
-    """
-    logger = logging.getLogger(__name__)
-    logger.info('making final data set from raw data')
+class DirDataset(Dataset):
+    def __init__(self, img_dir, mask_dir, scale=1):
+        self.img_dir = img_dir
+        self.mask_dir = mask_dir
+        self.scale = scale
 
+        try:
+            self.ids = [s.split('.')[0] for s in os.listdir(self.img_dir)]
+        except FileNotFoundError:
+            self.ids = []
 
-if __name__ == '__main__':
-    log_fmt = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    logging.basicConfig(level=logging.INFO, format=log_fmt)
+    def __len__(self):
+        return len(self.ids)
 
-    # not used in this stub but often useful for finding various files
-    project_dir = Path(__file__).resolve().parents[2]
+    def preprocess(self, img):
+        w, h = img.size
+        _h = int(h * self.scale)
+        _w = int(w * self.scale)
+        assert _w > 0
+        assert _h > 0
 
-    # find .env automagically by walking up directories until it's found, then
-    # load up the .env entries as environment variables
-    load_dotenv(find_dotenv())
+        _img = img.resize((_w, _h))
+        _img = np.array(_img)
+        if len(_img.shape) == 2:  ## gray/mask images
+            _img = np.expand_dims(_img, axis=-1)
 
-    main()
+        # hwc to chw
+        _img = _img.transpose((2, 0, 1))
+        if _img.max() > 1:
+            _img = _img / 255.
+        return _img
+
+    def __getitem__(self, i):
+        idx = self.ids[i]
+        img_files = glob.glob(os.path.join(self.img_dir, idx+'.*'))
+        mask_files = glob.glob(os.path.join(self.mask_dir, idx+'_mask.*'))
+
+        assert len(img_files) == 1, f'{idx}: {img_files}'
+        assert len(mask_files) == 1, f'{idx}: {mask_files}'
+
+        # use Pillow's Image to read .gif mask
+        # https://answers.opencv.org/question/185929/how-to-read-gif-in-python/
+        img = Image.open(img_files[0])
+        mask = Image.open(mask_files[0])
+        assert img.size == mask.size, f'{img.shape} # {mask.shape}'
+
+        img = self.preprocess(img)
+        mask = self.preprocess(mask)
+
+        return torch.from_numpy(img).float(), \
+            torch.from_numpy(mask).float()
