@@ -3,7 +3,7 @@ from zipfile import ZipFile
 from pathlib import Path
 
 class google_drive_downloader():
-    # credit: converted to class from https://stackoverflow.com/a/39225039
+    # credit: converted to class from https://stackoverflow.com/a/39225039 
 
     def __init__(self, cwd_path=None, data_path=None):
         """
